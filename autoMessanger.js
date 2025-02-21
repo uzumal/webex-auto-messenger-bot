@@ -100,13 +100,14 @@ function updateMemberSheet(members) {
 function getNextMember(memberSheet) {
   const data = memberSheet.getDataRange().getValues();
   const members = data.slice(1);
-  
+
   if (members.length === 0) return null;
-  
+
   const minCount = Math.min(...members.map(m => m[2]));
+
   const candidateMembers = members.filter(m => m[2] === minCount);
-  
   const selected = candidateMembers[Math.floor(Math.random() * candidateMembers.length)];
+
   return {
     email: selected[0],
     name: selected[1],
@@ -125,20 +126,22 @@ function clearMemberCounts(memberSheet) {
 function getRandomUnsentMessage(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return null;
-  
+
   const unsentRows = [];
-  for(let i = 2; i <= lastRow; i++) {
-    if(!sheet.getRange(i, 4).getValue()) {
+  for (let i = 2; i <= lastRow; i++) {
+    if (!sheet.getRange(i, 4).getValue()) {
       const message = sheet.getRange(i, 1).getValue();
       if (message) unsentRows.push(i);
     }
   }
-  
+
+  // すべてのメッセージが送信済みならリセット
   if (unsentRows.length === 0) {
-    if (lastRow > 1) sheet.getRange(2, 4, lastRow - 1).clearContent();
+    Logger.log('Message Reset');
+    sheet.getRange(2, 4, lastRow - 1).clearContent();
     return null;
   }
-  
+
   const randomRowIndex = Math.floor(Math.random() * unsentRows.length);
   return {
     row: unsentRows[randomRowIndex],
@@ -148,36 +151,66 @@ function getRandomUnsentMessage(sheet) {
 
 function sendDailyMessage() {
   try {
+    Logger.log('sendDailyMessage: Start');
+
     const spreadsheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
     const messageSheet = spreadsheet.getSheetByName(CONFIG.MESSAGE_SHEET);
-    if (!messageSheet) return;
-    
-    const members = getRoomMembers();
-    if (members.length === 0) return;
-    
-    const memberSheet = updateMemberSheet(members);
-    const selectedMember = getNextMember(memberSheet);
-    if (!selectedMember) return;
-    
-    const messageInfo = getRandomUnsentMessage(messageSheet);
-    if (!messageInfo) {
-      Logger.log('All messages have been sent. Clearing member counts.');
-      clearMemberCounts(memberSheet);
+    if (!messageSheet) {
+      Logger.log('sendDailyMessage: Not find a message');
       return;
     }
-    
-    if(send(messageInfo.message, selectedMember.email)) {
+
+    const members = getRoomMembers();
+    if (members.length === 0) {
+      Logger.log('sendDailyMessage: Not exist member');
+      return;
+    }
+
+    const memberSheet = updateMemberSheet(members);
+    const selectedMember = getNextMember(memberSheet);
+    if (!selectedMember) {
+      Logger.log('sendDailyMessage: Not find a member');
+      return;
+    }
+
+    const messageInfo = getRandomUnsentMessage(messageSheet);
+    if (!messageInfo) {
+      Logger.log('sendDailyMessage: Reset');
+      clearMessageFlags(messageSheet);
+      return;
+    }
+
+    if (send(messageInfo.message, selectedMember.email)) {
       messageSheet.getRange(messageInfo.row, 2).setValue(new Date());
       messageSheet.getRange(messageInfo.row, 3).setValue(selectedMember.email);
       messageSheet.getRange(messageInfo.row, 4).setValue(true);
-      
-      memberSheet.getRange(selectedMember.row, 3).setValue(selectedMember.count + 1);
-      Logger.log(`Message sent to: ${selectedMember.name} (${selectedMember.email})`);
+
+      const allMessagesSent = messageSheet.getRange(2, 4, messageSheet.getLastRow() - 1).getValues().flat().every(flag => flag === true);
+      if (allMessagesSent) {
+        clearMessageFlags(messageSheet);
+      }
+
+      const countCell = memberSheet.getRange(selectedMember.row, 3);
+      countCell.setValue(selectedMember.count + 1);
+
+      const allCounts = memberSheet.getRange(2, 3, memberSheet.getLastRow() - 1, 1).getValues().flat();
+      if (allCounts.every(count => count === 1)) {
+        clearMemberCounts(memberSheet);
+      }
+
     }
   } catch (error) {
-    Logger.log('Error in sendDailyMessage: ' + error);
+    Logger.log('sendDailyMessage: Error ' + error);
   }
 }
+
+function clearMessageFlags(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 4, lastRow - 1).setValue(false);
+  }
+}
+
 
 function isWorkday(targetDate) {
   const dayOfWeek = targetDate.getDay();
